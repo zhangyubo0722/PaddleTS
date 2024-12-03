@@ -13,6 +13,7 @@ import yaml
 
 from paddle.optimizer import Optimizer
 import numpy as np
+from packaging import version
 import paddle
 
 from paddlets.models.common.callbacks import (
@@ -374,9 +375,10 @@ class AnomalyBaseModel(abc.ABC):
         meta_data = self._build_meta()
         spec = build_network_input_spec(meta_data)
         model = paddle.jit.to_static(model, input_spec=spec)
-        logger.info("Successfully to apply @to_static with specs: {}".format(spec))
+        logger.info("Successfully to apply @to_static with specs: {}".format(
+            spec))
         return model
-    
+
     def fit(self,
             train_tsdataset: TSDataset,
             valid_tsdataset: Optional[TSDataset]=None,
@@ -426,13 +428,14 @@ class AnomalyBaseModel(abc.ABC):
         self._network = self._init_network()
         self._optimizer = self._init_optimizer()
         if self.use_amp:
-            logger.info('use AMP to train. AMP level = {}'.format(self.amp_level))
+            logger.info('use AMP to train. AMP level = {}'.format(
+                self.amp_level))
             self.scaler = paddle.amp.GradScaler(init_loss_scaling=1024)
             if self.amp_level == 'O2':
                 self._network, self._optimizer = paddle.amp.decorate(
-                                                    models=self._network,
-                                                    optimizers=self._optimizer,
-                                                    level='O2')
+                    models=self._network,
+                    optimizers=self._optimizer,
+                    level='O2')
         if to_static_train:
             self._network = self.apply_to_static(self._network)
 
@@ -508,7 +511,7 @@ class AnomalyBaseModel(abc.ABC):
                             "elementwise_add", "batch_norm", "sync_batch_norm"
                         },
                         custom_black_list={'bilinear_interp_v2'}):
-                
+
                     y_pred, y_true = self._network(data)
             else:
                 y_pred, y_true = self._network(data)
@@ -700,7 +703,7 @@ class AnomalyBaseModel(abc.ABC):
                 y_pred, y_true = self._network(X)
                 train_run_cost = time.time() - start_time
                 loss = self._compute_loss(y_pred, y_true)
-                scaled_loss = self.scaler.scale(loss) 
+                scaled_loss = self.scaler.scale(loss)
                 scaled_loss.backward()
                 self.scaler.step(self._optimizer)  # update parameters
                 self.scaler.update()
@@ -929,10 +932,33 @@ class AnomalyBaseModel(abc.ABC):
                 if dygraph_to_static:
                     layer = paddle.jit.to_static(
                         self._network, input_spec=input_spec)
-                    paddle.jit.save(
-                        layer,
-                        os.path.join(abs_root_path,
-                                     internal_filename_map["network_model"]))
+                    paddle_version = version.parse(paddle.__version__)
+                    if paddle_version >= version.parse(
+                            '3.0.0b2') or paddle_version == version.parse(
+                                '0.0.0'):
+                        for enable_pir in [True, False]:
+                            if not enable_pir:
+                                layer.forward.rollback()
+                                with paddle.pir_utils.OldIrGuard():
+                                    layer = paddle.jit.to_static(
+                                        self._network, input_spec=input_spec)
+                                    paddle.jit.save(
+                                        layer,
+                                        os.path.join(abs_root_path,
+                                                     internal_filename_map[
+                                                         "network_model"]))
+                            else:
+                                paddle.jit.save(
+                                    layer,
+                                    os.path.join(
+                                        abs_root_path,
+                                        internal_filename_map["network_model"]))
+                    else:
+                        paddle.jit.save(
+                            layer,
+                            os.path.join(
+                                abs_root_path,
+                                internal_filename_map["network_model"]))
                 else:
                     paddle.jit.save(
                         self._network,

@@ -12,6 +12,7 @@ import pickle
 import paddle
 import abc
 from typing import Optional, List, Union
+from packaging import version
 import json
 import yaml
 
@@ -178,10 +179,33 @@ class PaddleBaseModel(BaseModel, metaclass=abc.ABCMeta):
                 if dygraph_to_static:
                     layer = paddle.jit.to_static(
                         self._network, input_spec=input_spec)
-                    paddle.jit.save(
-                        layer,
-                        os.path.join(abs_root_path,
-                                     internal_filename_map["network_model"]))
+                    paddle_version = version.parse(paddle.__version__)
+                    if paddle_version >= version.parse(
+                            '3.0.0b2') or paddle_version == version.parse(
+                                '0.0.0'):
+                        for enable_pir in [False, True]:
+                            if not enable_pir:
+                                layer.forward.rollback()
+                                with paddle.pir_utils.OldIrGuard():
+                                    layer = paddle.jit.to_static(
+                                        self._network, input_spec=input_spec)
+                                    paddle.jit.save(
+                                        layer,
+                                        os.path.join(abs_root_path,
+                                                     internal_filename_map[
+                                                         "network_model"]))
+                            else:
+                                paddle.jit.save(
+                                    layer,
+                                    os.path.join(
+                                        abs_root_path,
+                                        internal_filename_map["network_model"]))
+                    else:
+                        paddle.jit.save(
+                            layer,
+                            os.path.join(
+                                abs_root_path,
+                                internal_filename_map["network_model"]))
                 else:
                     paddle.jit.save(
                         self._network,
