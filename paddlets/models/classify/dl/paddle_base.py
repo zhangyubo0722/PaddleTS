@@ -10,6 +10,7 @@ import os
 import pickle
 import json
 import yaml
+import shutil
 
 from paddle.optimizer import Optimizer
 import paddle.nn.functional as F
@@ -17,6 +18,7 @@ from paddle.nn import CrossEntropyLoss
 from sklearn.utils import check_random_state
 from paddlets.utils.utils import convert_and_remove_types
 import numpy as np
+from packaging import version
 import paddle
 
 # from paddlets.models.utils import format_labels
@@ -146,8 +148,7 @@ class PaddleBaseClassifier(BaseClassifier):
         if not self._eval_metrics:
             self._eval_metrics = ["acc"]
 
-    def _check_tsdatasets(self,
-                          tsdatasets: List[TSDataset],
+    def _check_tsdatasets(self, tsdatasets: List[TSDataset],
                           labels: np.ndarray):
         """Ensure the robustness of input data (consistent feature order), at the same time,
             check whether the data types are compatible. If not, the processing logic is as follows.
@@ -215,8 +216,7 @@ class PaddleBaseClassifier(BaseClassifier):
 
         else:
             return self._optimizer_fn(
-                **self._optimizer_params,
-                parameters=self._network.parameters())
+                **self._optimizer_params, parameters=self._network.parameters())
 
     def _init_fit_dataloaders(
             self,
@@ -261,8 +261,8 @@ class PaddleBaseClassifier(BaseClassifier):
                     valid_tsdatasets, valid_labels,
                     self._fit_params['input_lens'])
             else:
-                valid_dataset = data_adapter.to_paddle_dataset(
-                    valid_tsdatasets, valid_labels)
+                valid_dataset = data_adapter.to_paddle_dataset(valid_tsdatasets,
+                                                               valid_labels)
             valid_dataloader = data_adapter.to_paddle_dataloader(
                 valid_dataset, self._batch_size, shuffle=False)
 
@@ -284,8 +284,8 @@ class PaddleBaseClassifier(BaseClassifier):
             tsdatasets = [tsdatasets]
         self._check_tsdatasets(tsdatasets, labels)
         data_adapter = ClassifyDataAdapter()
-        dataset = data_adapter.to_paddle_dataset(
-            tsdatasets, labels, self._fit_params['input_lens'])
+        dataset = data_adapter.to_paddle_dataset(tsdatasets, labels,
+                                                 self._fit_params['input_lens'])
         dataloader = data_adapter.to_paddle_dataloader(
             dataset, self._batch_size, shuffle=False)
         return dataloader
@@ -350,9 +350,10 @@ class PaddleBaseClassifier(BaseClassifier):
         meta_data = self._build_meta()
         spec = build_network_input_spec(meta_data)
         model = paddle.jit.to_static(model, input_spec=spec)
-        logger.info("Successfully to apply @to_static with specs: {}".format(spec))
+        logger.info("Successfully to apply @to_static with specs: {}".format(
+            spec))
         return model
-    
+
     def fit(self,
             train_tsdatasets: List[TSDataset],
             train_labels: np.ndarray,
@@ -394,17 +395,18 @@ class PaddleBaseClassifier(BaseClassifier):
         self._history, self._callback_container = self._init_callbacks()
         self._network = self._init_network()
         self._optimizer = self._init_optimizer()
-        if self.use_amp :
-            logger.info('use AMP to train. AMP level = {}'.format(self.amp_level))
+        if self.use_amp:
+            logger.info('use AMP to train. AMP level = {}'.format(
+                self.amp_level))
             self.scaler = paddle.amp.GradScaler(init_loss_scaling=1024)
             if self.amp_level == 'O2':
                 self._network, self._optimizer = paddle.amp.decorate(
-                                                    models=self._network,
-                                                    optimizers=self._optimizer,
-                                                    level='O2')
+                    models=self._network,
+                    optimizers=self._optimizer,
+                    level='O2')
         if to_static_train:
             self._network = self.apply_to_static(self._network)
-        
+
         check_random_state(self._seed)
 
         # Call the `on_train_begin` method of each callback before the training starts.
@@ -447,8 +449,7 @@ class PaddleBaseClassifier(BaseClassifier):
         # np.save('probs',probs)
         rng = check_random_state(self._seed)
         return np.array([
-            self._classes_[int(
-                rng.choice(np.flatnonzero(prob == prob.max())))]
+            self._classes_[int(rng.choice(np.flatnonzero(prob == prob.max())))]
             for prob in probs
         ])
 
@@ -548,7 +549,7 @@ class PaddleBaseClassifier(BaseClassifier):
                 output = self._network(X)
                 train_run_cost = time.time() - start_time
                 loss = self._compute_loss(output, y)
-                scaled_loss = self.scaler.scale(loss) 
+                scaled_loss = self.scaler.scale(loss)
                 scaled_loss.backward()
                 self.scaler.step(self._optimizer)  # update parameters
                 self.scaler.update()
@@ -559,7 +560,7 @@ class PaddleBaseClassifier(BaseClassifier):
                     "loss": loss.item(),
                     "train_run_cost": train_run_cost
                 }
-        
+
         else:
             output = self._network(X)
             train_run_cost = time.time() - start_time
@@ -757,7 +758,6 @@ class PaddleBaseClassifier(BaseClassifier):
             % conflict_files)
 
         # start to save
-        # 1 save network model and params for paddle inference
         model_meta = self._build_meta()
         if batch_size is not None:
             model_meta['batch_size'] = batch_size
@@ -766,27 +766,8 @@ class PaddleBaseClassifier(BaseClassifier):
             self._network.eval()
             input_spec = build_network_input_spec(model_meta)
             try:
-                if dygraph_to_static:
-                    layer = paddle.jit.to_static(
-                        self._network, input_spec=input_spec)
-                    paddle.jit.save(
-                        layer,
-                        os.path.join(abs_root_path,
-                                     internal_filename_map["network_model"]))
-                else:
-                    paddle.jit.save(
-                        self._network,
-                        os.path.join(abs_root_path,
-                                     internal_filename_map["network_model"]),
-                        input_spec=input_spec)
-            except Exception as e:
-                raise_log(
-                    ValueError(
-                        "error occurred while saving or dygraph_to_static network_model: %s, err: %s"
-                        % (internal_filename_map["network_model"], str(e))))
-
-        # 2 save model meta (e.g. classname)
-            try:
+                if not os.path.os.path.exists(abs_root_path):
+                    os.makedirs(abs_root_path)
                 with open(os.path.join(abs_root_path, 'inference.yml'),
                           "w") as f:
                     if data_info is not None:
@@ -799,6 +780,54 @@ class PaddleBaseClassifier(BaseClassifier):
                 raise_log(
                     ValueError("error occurred while saving %s, err: %s" % (
                         internal_filename_map["model_meta"], str(e))))
+            try:
+                if dygraph_to_static:
+                    layer = paddle.jit.to_static(
+                        self._network, input_spec=input_spec)
+                    save_name = internal_filename_map["network_model"]
+                    paddle_version = version.parse(paddle.__version__)
+                    if (paddle_version >= version.parse('3.0.0b2') or
+                            paddle_version == version.parse('0.0.0')
+                        ) and os.environ.get("FLAGS_enable_pir_api",
+                                             None) not in ["0", "False"]:
+                        for enable_pir in [True, False]:
+                            if not enable_pir:
+                                layer.forward.rollback()
+                                with paddle.pir_utils.OldIrGuard():
+                                    layer = paddle.jit.to_static(
+                                        self._network, input_spec=input_spec)
+                                    paddle.jit.save(layer,
+                                                    os.path.join(abs_root_path,
+                                                                 save_name))
+                            else:
+                                save_path_pir = os.path.join(
+                                    os.path.dirname(abs_root_path),
+                                    f"{os.path.basename(abs_root_path)}_pir")
+                                paddle.jit.save(layer,
+                                                os.path.join(save_path_pir,
+                                                             save_name))
+                                shutil.copy(
+                                    os.path.join(abs_root_path,
+                                                 'inference.yml'),
+                                    os.path.join(save_path_pir,
+                                                 'inference.yml'), )
+                                shutil.copy(
+                                    os.path.join(abs_root_path, 'scaler.pkl'),
+                                    os.path.join(save_path_pir, 'scaler.pkl'), )
+                    else:
+                        paddle.jit.save(layer,
+                                        os.path.join(abs_root_path, save_name))
+                else:
+                    paddle.jit.save(
+                        self._network,
+                        os.path.join(abs_root_path,
+                                     internal_filename_map["network_model"]),
+                        input_spec=input_spec)
+            except Exception as e:
+                raise_log(
+                    ValueError(
+                        "error occurred while saving or dygraph_to_static network_model: %s, err: %s"
+                        % (internal_filename_map["network_model"], str(e))))
 
         if not network_model:
             try:
