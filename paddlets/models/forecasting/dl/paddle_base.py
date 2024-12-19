@@ -12,8 +12,10 @@ import pickle
 import paddle
 import abc
 from typing import Optional, List, Union
+from packaging import version
 import json
 import yaml
+import shutil
 
 
 class PaddleBaseModel(BaseModel, metaclass=abc.ABCMeta):
@@ -175,26 +177,8 @@ class PaddleBaseModel(BaseModel, metaclass=abc.ABCMeta):
             self._network.eval()
             input_spec = build_network_input_spec(model_meta)
             try:
-                if dygraph_to_static:
-                    layer = paddle.jit.to_static(
-                        self._network, input_spec=input_spec)
-                    paddle.jit.save(
-                        layer,
-                        os.path.join(abs_root_path,
-                                     internal_filename_map["network_model"]))
-                else:
-                    paddle.jit.save(
-                        self._network,
-                        os.path.join(abs_root_path,
-                                     internal_filename_map["network_model"]),
-                        input_spec=input_spec)
-            except Exception as e:
-                raise_log(
-                    ValueError(
-                        "error occurred while saving or dygraph_to_static network_model: %s, err: %s"
-                        % (internal_filename_map["network_model"], str(e))))
-
-            try:
+                if not os.path.os.path.exists(abs_root_path):
+                    os.makedirs(abs_root_path)
                 with open(os.path.join(abs_root_path, 'inference.yml'),
                           "w") as f:
                     if data_info is not None:
@@ -207,6 +191,54 @@ class PaddleBaseModel(BaseModel, metaclass=abc.ABCMeta):
                 raise_log(
                     ValueError("error occurred while saving %s, err: %s" % (
                         internal_filename_map["model_meta"], str(e))))
+            try:
+                if dygraph_to_static:
+                    layer = paddle.jit.to_static(
+                        self._network, input_spec=input_spec)
+                    save_name = internal_filename_map["network_model"]
+                    paddle_version = version.parse(paddle.__version__)
+                    if (paddle_version >= version.parse('3.0.0b2') or
+                            paddle_version == version.parse('0.0.0')
+                        ) and os.environ.get("FLAGS_enable_pir_api",
+                                             None) not in ["0", "False"]:
+                        for enable_pir in [True, False]:
+                            if not enable_pir:
+                                layer.forward.rollback()
+                                with paddle.pir_utils.OldIrGuard():
+                                    layer = paddle.jit.to_static(
+                                        self._network, input_spec=input_spec)
+                                    paddle.jit.save(layer,
+                                                    os.path.join(abs_root_path,
+                                                                 save_name))
+                            else:
+                                save_path_pir = os.path.join(
+                                    os.path.dirname(abs_root_path),
+                                    f"{os.path.basename(abs_root_path)}_pir")
+                                paddle.jit.save(layer,
+                                                os.path.join(save_path_pir,
+                                                             save_name))
+                                shutil.copy(
+                                    os.path.join(abs_root_path,
+                                                 'inference.yml'),
+                                    os.path.join(save_path_pir,
+                                                 'inference.yml'), )
+                                shutil.copy(
+                                    os.path.join(abs_root_path, 'scaler.pkl'),
+                                    os.path.join(save_path_pir, 'scaler.pkl'), )
+                    else:
+                        paddle.jit.save(layer,
+                                        os.path.join(abs_root_path, save_name))
+                else:
+                    paddle.jit.save(
+                        self._network,
+                        os.path.join(abs_root_path,
+                                     internal_filename_map["network_model"]),
+                        input_spec=input_spec)
+            except Exception as e:
+                raise_log(
+                    ValueError(
+                        "error occurred while saving or dygraph_to_static network_model: %s, err: %s"
+                        % (internal_filename_map["network_model"], str(e))))
         # 2 save model meta (e.g. classname)
         if not network_model:
             try:
