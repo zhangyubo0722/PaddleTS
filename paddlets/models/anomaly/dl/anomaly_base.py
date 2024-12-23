@@ -844,6 +844,7 @@ class AnomalyBaseModel(abc.ABC):
              network_model: bool=False,
              dygraph_to_static: bool=True,
              model_name=None,
+             export_with_pir=False,
              batch_size: Optional[int]=None,
              data_info: Optional[dict]=None) -> None:
         """
@@ -948,38 +949,23 @@ class AnomalyBaseModel(abc.ABC):
                     layer = paddle.jit.to_static(
                         self._network, input_spec=input_spec)
                     save_name = internal_filename_map["network_model"]
-                    paddle_version = version.parse(paddle.__version__)
-                    if (paddle_version >= version.parse('3.0.0b2') or
+                    if export_with_pir:
+                        paddle_version = version.parse(paddle.__version__)
+                        assert (
+                            paddle_version >= version.parse('3.0.0b2') or
                             paddle_version == version.parse('0.0.0')
                         ) and os.environ.get("FLAGS_enable_pir_api",
-                                             None) not in ["0", "False"]:
-                        for enable_pir in [True, False]:
-                            if not enable_pir:
-                                layer.forward.rollback()
-                                with paddle.pir_utils.OldIrGuard():
-                                    layer = paddle.jit.to_static(
-                                        self._network, input_spec=input_spec)
-                                    paddle.jit.save(layer,
-                                                    os.path.join(abs_root_path,
-                                                                 save_name))
-                            else:
-                                save_path_pir = os.path.join(
-                                    os.path.dirname(abs_root_path),
-                                    f"{os.path.basename(abs_root_path)}_pir")
-                                paddle.jit.save(layer,
-                                                os.path.join(save_path_pir,
-                                                             save_name))
-                                shutil.copy(
-                                    os.path.join(abs_root_path,
-                                                 'inference.yml'),
-                                    os.path.join(save_path_pir,
-                                                 'inference.yml'), )
-                                shutil.copy(
-                                    os.path.join(abs_root_path, 'scaler.pkl'),
-                                    os.path.join(save_path_pir, 'scaler.pkl'), )
-                    else:
+                                             None) not in ["0", "False"]
                         paddle.jit.save(layer,
                                         os.path.join(abs_root_path, save_name))
+                    else:
+                        layer.forward.rollback()
+                        with paddle.pir_utils.OldIrGuard():
+                            layer = paddle.jit.to_static(
+                                self._network, input_spec=input_spec)
+                            paddle.jit.save(layer,
+                                            os.path.join(abs_root_path,
+                                                         save_name))
                 else:
                     paddle.jit.save(
                         self._network,
