@@ -64,11 +64,10 @@ def export(args, model=None):
 
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-
+    cfg = Config(args.config)
+    export_with_pir = cfg.dic.get('export_with_pir', False)
     if os.path.exists(os.path.join(weight_path, 'config.yaml')):
         cfg = Config(os.path.join(weight_path, 'config.yaml'))
-    else:
-        cfg = Config(args.config)
 
     if cfg.dic.get('info_params', None) is None:
         raise ValueError("`info_params` is necessary, but it is None.")
@@ -135,7 +134,8 @@ def export(args, model=None):
             save_path,
             network_model=True,
             dygraph_to_static=True,
-            model_name=cfg.dic.get('pdx_model_name', None))
+            model_name=cfg.dic.get('pdx_model_name', None),
+            export_with_pir=export_with_pir)
     else:
         if model is None:
             model = load(weight_path + '/checkpoints')
@@ -144,7 +144,8 @@ def export(args, model=None):
             network_model=True,
             dygraph_to_static=True,
             data_info=data_info,
-            model_name=cfg.dic.get('pdx_model_name', None))
+            model_name=cfg.dic.get('pdx_model_name', None),
+            export_with_pir=export_with_pir)
 
 
 if __name__ == '__main__':
