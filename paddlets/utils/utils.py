@@ -503,6 +503,8 @@ def convert_and_remove_types(data):
         }
     elif isinstance(data, list):
         return [convert_and_remove_types(v) for v in data]
+    elif isinstance(data, tuple):
+        return [convert_and_remove_types(v) for v in data]
     elif isinstance(data, np.ndarray):
         return data.tolist()
     elif isinstance(data, (np.float32, np.float64)):
